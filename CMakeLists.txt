@@ -42,6 +42,7 @@ if(BUILD_TESTS)
   add_executable(tests
     tests/test_tokenizer.cpp
     tests/test_index.cpp
+    tests/test_bm25.cpp
   )
   target_link_libraries(tests PRIVATE searchlib GTest::gtest_main)
   include(GoogleTest)

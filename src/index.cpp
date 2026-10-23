@@ -13,6 +13,7 @@ uint32_t InvertedIndex::addDocument(const std::string& name, const std::string& 
 
     const std::vector<std::string> tokens = tokenize(text);
     docLengths_.push_back(static_cast<uint32_t>(tokens.size()));
+    totalLength_ += tokens.size();
 
     // Collect positions per term for this document first, then append one
     // Posting per term. Doc ids increase, so posting lists stay sorted.
@@ -31,18 +32,33 @@ const std::vector<Posting>* InvertedIndex::postings(const std::string& term) con
     return it == index_.end() ? nullptr : &it->second;
 }
 
-std::vector<SearchResult> InvertedIndex::search(const std::string& query, size_t topK) const {
+std::vector<SearchResult> InvertedIndex::search(const std::string& query, size_t topK,
+                                                RankMode mode) const {
     std::unordered_map<uint32_t, double> scores;
     const double N = static_cast<double>(numDocs());
+    const double avgdl = avgDocLength();
 
     for (const std::string& term : tokenize(query)) {
         const auto* plist = postings(term);
         if (!plist) continue;
         const double df = static_cast<double>(plist->size());
-        const double idf = std::log(1.0 + N / df);  // rare terms weigh more
-        for (const Posting& p : *plist) {
-            const double tf = static_cast<double>(p.positions.size());
-            scores[p.docId] += tf * idf;
+
+        if (mode == RankMode::TfIdf) {
+            const double idf = std::log(1.0 + N / df);  // rare terms weigh more
+            for (const Posting& p : *plist) {
+                const double tf = static_cast<double>(p.positions.size());
+                scores[p.docId] += tf * idf;
+            }
+        } else {
+            // BM25: idf * tf*(k1+1) / (tf + k1*(1 - b + b*dl/avgdl))
+            // The "+1" inside the log keeps idf positive even for very common terms.
+            const double idf = std::log(1.0 + (N - df + 0.5) / (df + 0.5));
+            for (const Posting& p : *plist) {
+                const double tf = static_cast<double>(p.positions.size());
+                const double dl = static_cast<double>(docLengths_[p.docId]);
+                const double norm = 1.0 - bm25_.b + bm25_.b * dl / avgdl;
+                scores[p.docId] += idf * tf * (bm25_.k1 + 1.0) / (tf + bm25_.k1 * norm);
+            }
         }
     }
 
