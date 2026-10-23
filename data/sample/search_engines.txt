@@ -1,0 +1,1 @@
+A search engine builds an inverted index that maps every word to the documents containing it. When you type a query, the engine looks up each word, combines the matching documents, and ranks them with a scoring function such as TF-IDF or BM25.
