@@ -14,6 +14,27 @@ Each query word contributes a score to each document that contains it. The score
 
 Tuning constants: `k1 = 1.2` (term-frequency saturation) and `b = 0.75` (length normalization).
 
+## Query syntax
+
+| Query | Meaning |
+|---|---|
+| `cat dog` | ranked search, any word may match (best matches first) |
+| `"quick brown"` | phrase: the words must be next to each other, in this order |
+| `cat AND dog` | documents containing both (writing `cat dog` inside a Boolean query also means AND) |
+| `cat OR dog` | documents containing either |
+| `cat AND NOT dog` | cat, but not dog |
+| `(fox OR cat) AND "lazy dog"` | grouping |
+
+Operators must be UPPERCASE. Precedence is NOT, then AND, then OR. For Boolean queries the matching documents are still ranked with BM25, using the words that are not negated. A malformed query such as `fox AND` prints an error instead of crashing.
+
+### How phrase search works
+
+Each posting stores the word offsets of every occurrence. To find `"quick brown"`: intersect the posting lists of `quick` and `brown` (both sorted by document id, so one linear walk), then in each shared document check that `brown` appears at the position right after some `quick`. For longer phrases, word `i` must appear at `start + i`.
+
+### How Boolean queries work
+
+Each word or phrase turns into a sorted list of document ids. `AND` is a sorted-list intersection, `OR` is a union, and `NOT` subtracts from the list of all documents. A small recursive-descent parser handles precedence and parentheses.
+
 ## Build and run
 
 Requirements: a C++17 compiler (GCC/MinGW or MSVC) and CMake 3.14+. GoogleTest is downloaded automatically.
@@ -54,17 +75,17 @@ search> inverted index
 - [x] BM25 ranking (default), selectable via `RankMode`
 - [x] CLI with indexing time and per-query latency
 - [x] Unit tests (GoogleTest)
-- [ ] Boolean queries (AND / OR / NOT)
-- [ ] Phrase search (will use the stored positions)
+- [x] Boolean queries (AND / OR / NOT, parentheses)
+- [x] Phrase search (uses the stored word positions)
 - [ ] Incremental indexing (add / remove documents), save / load index
 - [ ] Benchmarks: indexing throughput, query latency, memory on 1K / 10K / 100K documents
 
 ## Project layout
 
 ```
-include/   headers (tokenizer.h, index.h)
+include/   headers (tokenizer.h, index.h, query.h)
 src/       implementation; main.cpp is the CLI
-tests/     GoogleTest unit tests (tokenizer, index, BM25)
+tests/     GoogleTest unit tests (tokenizer, index, BM25, phrase and Boolean queries)
 data/      sample documents
 ```
 
@@ -78,4 +99,7 @@ index.addDocument("b.txt", "dogs are loyal");
 auto results = index.search("cat", 10);                       // BM25
 auto tfidf   = index.search("cat", 10, ms::RankMode::TfIdf);  // for comparison
 for (auto& r : results) std::cout << index.docName(r.docId) << " " << r.score << "\n";
+
+// Phrase and Boolean queries (include "query.h"):
+auto hits = ms::runQuery(index, "(cat OR dog) AND \"sat on\" AND NOT bird");
 ```

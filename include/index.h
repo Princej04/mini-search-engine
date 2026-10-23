@@ -9,7 +9,7 @@ namespace ms {
 // One entry in a term's posting list: which document, and where in it.
 struct Posting {
     uint32_t docId;
-    std::vector<uint32_t> positions;  // word offsets; tf = positions.size()
+    std::vector<uint32_t> positions;  // word offsets, ascending; tf = positions.size()
 };
 
 struct SearchResult {
@@ -46,9 +46,29 @@ public:
     std::vector<SearchResult> search(const std::string& query, size_t topK = 10,
                                      RankMode mode = RankMode::BM25) const;
 
+    // Phrase search: ids (ascending) of documents where `terms` appear as
+    // consecutive words, in order. Uses the stored word positions.
+    // One term = every document containing it. No terms = no documents.
+    std::vector<uint32_t> phraseMatch(const std::vector<std::string>& terms) const;
+
+    // All document ids, ascending.
+    std::vector<uint32_t> allDocIds() const;
+
+    // Scores only the given candidate documents against `terms` and returns
+    // the best `topK`. Candidates that contain none of the terms get score 0.
+    std::vector<SearchResult> rankDocs(const std::vector<std::string>& terms,
+                                       const std::vector<uint32_t>& candidates,
+                                       size_t topK = 10,
+                                       RankMode mode = RankMode::BM25) const;
+
     void setBm25Params(const Bm25Params& p) { bm25_ = p; }
 
 private:
+    // docId -> score summed over all `terms`.
+    std::unordered_map<uint32_t, double> scoreTerms(const std::vector<std::string>& terms,
+                                                    RankMode mode) const;
+    static void keepTopK(std::vector<SearchResult>& results, size_t topK);
+
     std::unordered_map<std::string, std::vector<Posting>> index_;
     std::vector<std::string> docNames_;
     std::vector<uint32_t> docLengths_;  // number of tokens per document
