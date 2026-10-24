@@ -28,6 +28,13 @@ target_include_directories(searchlib PUBLIC include)
 add_executable(search src/main.cpp)
 target_link_libraries(search PRIVATE searchlib)
 
+# Benchmark program (see benchmarks/bench.cpp)
+add_executable(benchmark benchmarks/bench.cpp)
+target_link_libraries(benchmark PRIVATE searchlib)
+if(WIN32)
+  target_link_libraries(benchmark PRIVATE psapi)   # for peak memory
+endif()
+
 # Tests. Turn off with: cmake -S . -B build -DBUILD_TESTS=OFF
 option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)

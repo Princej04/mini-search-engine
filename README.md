@@ -54,6 +54,71 @@ How it works:
 
 Limitation: change detection uses size and modification time, so a file edited without changing either would not be noticed.
 
+## Benchmarks
+
+```
+cmake -S . -B build -G "MinGW Makefiles"
+cmake --build build
+./build/benchmark --out benchmarks/results.md
+```
+
+Use an optimized build (this project defaults to Release; with Visual Studio add `--config Release`). The program prints a warning if it was not built that way.
+
+It generates its own documents (a 200,000-word vocabulary with a Zipf-like word distribution and log-normal document lengths, about 150 words on average), so it needs no downloads and every run is reproducible from the seed. For each size it reports:
+
+- **Indexing:** time, documents per second, MB of text per second, unique terms, peak memory.
+- **Queries:** mean, median, 95th and 99th percentile latency for single words, two-word ranked queries (BM25 and TF-IDF), `a AND b`, phrases, and `(a OR b) AND NOT c`.
+- **Persistence:** time to build from files, save, and load; index file size; and the time to re-sync after 1% of files were edited, 1% deleted and 1% added, compared with a full rebuild.
+
+Options: `--sizes 1000,10000,100000`, `--queries 1000`, `--sync-max 10000` (the file-based test writes that many files to your temp folder), `--no-sync`, `--seed 42`. The default 100,000-document run needs roughly 1 GB of RAM; use `--sizes 1000,10000` on a small machine.
+
+### Results
+
+Generated data, optimized build (GCC 13.1.0), single thread, 1,000 queries per type, top 10 results. Machine: (add your CPU and RAM here). Full tables: [`benchmarks/results.md`](benchmarks/results.md).
+
+**Indexing**
+
+| Documents | Words | Index time | Docs/s | Unique terms | Peak memory |
+|---|---:|---:|---:|---:|---:|
+| 1,000 | 0.15 M | 0.03 s | 28,890 | 38,872 | 11 MB |
+| 10,000 | 1.51 M | 0.37 s | 27,317 | 143,972 | 84 MB |
+| 100,000 | 15.27 M | 3.70 s | 27,061 | 199,949 | 706 MB |
+
+**Mean query latency (microseconds)**
+
+| Query | 1,000 docs | 10,000 docs | 100,000 docs |
+|---|---:|---:|---:|
+| Single common word | 12.7 | 111.4 | 1,342.7 |
+| Single rare word | 0.5 | 0.9 | 2.9 |
+| Two words, any may match (BM25) | 21.9 | 202.6 | 2,503.1 |
+| `a AND b` | 24.0 | 251.3 | 3,264.2 |
+| `"a b"` (phrase) | 24.9 | 256.7 | 2,881.3 |
+| `(a OR b) AND NOT c` | 31.7 | 337.4 | 4,524.1 |
+
+**Saving, loading and incremental updates**
+
+| Documents | Build from files | Save | Index file | Load | Re-sync, nothing changed | Re-sync, 3% changed |
+|---|---:|---:|---:|---:|---:|---:|
+| 1,000 | 3.02 s* | 10 ms | 0.7 MB | 26 ms | 22 ms | 135 ms |
+| 10,000 | 2.40 s | 73 ms | 5.8 MB | 88 ms | 225 ms | 511 ms |
+
+\*The 1,000-document build time is an outlier (it was slower than the 10,000 case). It was the first file-based test in the run, so it most likely paid for cold disk caches and antivirus scanning of freshly written files. Read the 10,000-document row for the real picture.
+
+**What the numbers show**
+
+- **Indexing is linear.** Throughput stays near 27,000 documents (about 18 MB of text) per second at every size.
+- **Memory is the weak spot.** 100,000 documents use about 706 MB, roughly 10 times the size of the text itself (about 7 KB per document). Each posting is a separate small vector, which costs a lot in per-object overhead.
+- **Query time grows linearly with the corpus.** A common-word query goes from 13 us to 111 us to 1.3 ms as the corpus grows 10x each step, while a rare word stays under 3 us. The engine scores every matching document (a common word matches thousands), so cost follows the posting-list length, not the corpus size alone. Phrase and AND queries cost about the same as a plain two-word query.
+- **Saved indexes pay off.** Loading the 10,000-document index (88 ms) is about 27 times faster than building it from the files (2.4 s). Re-syncing after 3% of the files changed took 511 ms instead of 2.4 s, about 5 times faster. Much of what remains is walking the folder and checking every file's size and modification time.
+
+### Possible improvements
+
+- **Faster queries:** accumulate scores in a flat array indexed by document id instead of a hash map, and keep the top 10 in a small heap instead of sorting every match.
+- **Less memory:** store postings in flat arrays, and keep the delta + varint compression in memory instead of only on disk.
+- **Faster AND and phrase queries:** skip pointers in posting lists, and process the rarest word first.
+- **Faster indexing:** build in parallel on several threads and merge.
+- **Better matching:** stemming, so "running" also matches "run".
+
 ## Build and run
 
 Requirements: a C++17 compiler (GCC/MinGW or MSVC) and CMake 3.14+. GoogleTest is downloaded automatically.
@@ -98,7 +163,8 @@ search> inverted index
 - [x] Phrase search (uses the stored word positions)
 - [x] Incremental indexing: add, update and remove documents without rebuilding
 - [x] Save / load the index (delta + varint compressed), re-sync a folder processing only what changed
-- [ ] Benchmarks: indexing throughput, query latency, memory on 1K / 10K / 100K documents
+- [x] Benchmark program: indexing throughput, query latency, memory on 1K / 10K / 100K documents, save / load / incremental re-sync
+- [x] Benchmark results on real hardware (see Benchmarks below)
 
 ## Project layout
 
@@ -107,6 +173,7 @@ include/   headers (tokenizer.h, index.h, query.h, corpus.h)
 src/       implementation: index.cpp (index + ranking), index_io.cpp (save/load),
            query.cpp (parser), corpus.cpp (folder sync); main.cpp is the CLI
 tests/     GoogleTest unit tests (tokenizer, index, BM25, queries, incremental indexing)
+benchmarks/ bench.cpp: the benchmark program (results go in benchmarks/results.md)
 data/      sample documents
 ```
 
