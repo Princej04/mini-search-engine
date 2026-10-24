@@ -35,6 +35,25 @@ Each posting stores the word offsets of every occurrence. To find `"quick brown"
 
 Each word or phrase turns into a sorted list of document ids. `AND` is a sorted-list intersection, `OR` is a union, and `NOT` subtracts from the list of all documents. A small recursive-descent parser handles precedence and parentheses.
 
+## Incremental indexing
+
+```
+./build/search data/sample --index sample.idx
+```
+
+- **First run:** indexes every `.txt` file under the folder and saves `sample.idx`.
+- **Later runs:** loads the saved index, then compares each file's size and modification time with the stamp stored in the index. Only new files are indexed, changed files are re-indexed, and deleted files are removed. Unchanged files are not even read.
+- In the prompt: `:add <file>`, `:remove <name>`, `:save`, `:stats`. Changes made with these are saved on exit.
+
+How it works:
+
+- **Removal uses tombstones.** A removed document keeps its id slot (so other ids never change) and is skipped by every query immediately. Its postings are physically deleted later by `compact()`, which also runs automatically once enough removals pile up. This is the same idea real engines use (mark deleted now, merge later), because deleting from the middle of every posting list per removal would be slow.
+- **Statistics stay correct.** Document counts, document frequencies and average length only count live documents, so BM25 scores after a removal are identical to a freshly built index (there is a test for exactly this).
+- **Updating = remove + add.** Adding a document whose name already exists replaces it.
+- **Saved format.** Posting lists are sorted, so each document id and word position is stored as the *difference* from the previous one, written as a variable-length integer (1 byte for numbers under 128). Saving writes a temporary file and renames it, so a crash cannot corrupt an existing index. Loading validates everything and throws on a truncated or corrupt file instead of crashing (tested by flipping every byte of a file in turn, also under AddressSanitizer).
+
+Limitation: change detection uses size and modification time, so a file edited without changing either would not be noticed.
+
 ## Build and run
 
 Requirements: a C++17 compiler (GCC/MinGW or MSVC) and CMake 3.14+. GoogleTest is downloaded automatically.
@@ -77,15 +96,17 @@ search> inverted index
 - [x] Unit tests (GoogleTest)
 - [x] Boolean queries (AND / OR / NOT, parentheses)
 - [x] Phrase search (uses the stored word positions)
-- [ ] Incremental indexing (add / remove documents), save / load index
+- [x] Incremental indexing: add, update and remove documents without rebuilding
+- [x] Save / load the index (delta + varint compressed), re-sync a folder processing only what changed
 - [ ] Benchmarks: indexing throughput, query latency, memory on 1K / 10K / 100K documents
 
 ## Project layout
 
 ```
-include/   headers (tokenizer.h, index.h, query.h)
-src/       implementation; main.cpp is the CLI
-tests/     GoogleTest unit tests (tokenizer, index, BM25, phrase and Boolean queries)
+include/   headers (tokenizer.h, index.h, query.h, corpus.h)
+src/       implementation: index.cpp (index + ranking), index_io.cpp (save/load),
+           query.cpp (parser), corpus.cpp (folder sync); main.cpp is the CLI
+tests/     GoogleTest unit tests (tokenizer, index, BM25, queries, incremental indexing)
 data/      sample documents
 ```
 
@@ -102,4 +123,11 @@ for (auto& r : results) std::cout << index.docName(r.docId) << " " << r.score <<
 
 // Phrase and Boolean queries (include "query.h"):
 auto hits = ms::runQuery(index, "(cat OR dog) AND \"sat on\" AND NOT bird");
+
+// Incremental indexing:
+index.addDocument("a.txt", "new text");   // adds, or replaces an existing "a.txt"
+index.removeDocument("b.txt");            // hidden from queries immediately
+index.save("my.idx");                     // compressed binary file
+auto again = ms::InvertedIndex::load("my.idx");
+ms::syncFolder(again, "data/books");      // only new / changed / deleted files are processed
 ```

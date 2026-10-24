@@ -18,7 +18,9 @@ endif()
 add_library(searchlib
   src/tokenizer.cpp
   src/index.cpp
+  src/index_io.cpp
   src/query.cpp
+  src/corpus.cpp
 )
 target_include_directories(searchlib PUBLIC include)
 
@@ -45,6 +47,7 @@ if(BUILD_TESTS)
     tests/test_index.cpp
     tests/test_bm25.cpp
     tests/test_query.cpp
+    tests/test_incremental.cpp
   )
   target_link_libraries(tests PRIVATE searchlib GTest::gtest_main)
   include(GoogleTest)
